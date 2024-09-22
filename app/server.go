@@ -17,7 +17,8 @@ func main() {
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	util.ExitOnErr(err, "Failed to bind to port 4221")
 
-	_, err = l.Accept()
-
+	conn, err := l.Accept()
 	util.ExitOnErr(err, "Error accepting connection")
+	defer conn.Close()
+	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
