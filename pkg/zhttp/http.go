@@ -9,17 +9,23 @@ import (
 	"github.com/codecrafters-io/http-server-starter-go/pkg/util"
 )
 
-type HandleFunc func(*Request) *Response
-type PathDetail struct {
+func NewHttpServerConfig() *httpServerConfig {
+	return &httpServerConfig{
+		paths: make(map[string]pathDetail),
+	}
+}
+
+type handleFunc func(*Request) *Response
+type pathDetail struct {
 	rg *regexp.Regexp
-	fn HandleFunc
+	fn handleFunc
 }
 
-type HttpServerConfig struct {
-	paths map[string]PathDetail
+type httpServerConfig struct {
+	paths map[string]pathDetail
 }
 
-func (c *HttpServerConfig) HandleFunc(pattern string, handler HandleFunc) error {
+func (c *httpServerConfig) HandleFunc(pattern string, handler handleFunc) error {
 	split := strings.Split(pattern, "/")
 	splitPattern := make([]string, 0, len(split))
 	for _, s := range split {
@@ -38,20 +44,14 @@ func (c *HttpServerConfig) HandleFunc(pattern string, handler HandleFunc) error 
 	finalPattern := fmt.Sprintf("^%s$", strings.Join(splitPattern, "/"))
 	rg, err := regexp.Compile(finalPattern)
 	util.LogOnErr(err, "unable to compile regex", "path", pattern, "pattern", finalPattern)
-	c.paths[pattern] = PathDetail{
+	c.paths[pattern] = pathDetail{
 		rg: rg,
 		fn: handler,
 	}
 	return nil
 }
 
-func NewHttpServerConfig() *HttpServerConfig {
-	return &HttpServerConfig{
-		paths: make(map[string]PathDetail),
-	}
-}
-
-func ListenAndServe(addr string, config *HttpServerConfig) error {
+func ListenAndServe(addr string, config *httpServerConfig) error {
 	l, err := net.Listen("tcp", addr)
 	util.ExitOnErr(err, "failed to bind", "addr", addr)
 	util.LogInfo(fmt.Sprintf("Server started: http://%s", addr))
@@ -78,41 +78,7 @@ func ListenAndServe(addr string, config *HttpServerConfig) error {
 	}
 }
 
-type Response struct {
-	headers    map[string]string
-	body       []byte
-	statusCode int
-}
-
-func NewResponse() *Response {
-	return &Response{
-		headers:    make(map[string]string),
-		statusCode: 200,
-	}
-}
-
-func (c *Response) setBody(body []byte, contentType string) {
-	c.headers["Content-Type"] = contentType
-	c.headers["Content-Length"] = fmt.Sprintf("%d", len(body))
-	c.body = body
-}
-
-func (c *Response) Json(body []byte) *Response {
-	c.setBody(body, "application/json")
-	return c
-}
-
-func (c *Response) Text(body []byte) *Response {
-	c.setBody(body, "text/plain")
-	return c
-}
-
-func (r *Response) StatusCode(code int) *Response {
-	r.statusCode = code
-	return r
-}
-
-func processRequest(conn *net.Conn, config *HttpServerConfig, req *Request) error {
+func processRequest(conn *net.Conn, config *httpServerConfig, req *Request) error {
 	response := NewResponse().StatusCode(404)
 
 	for _, detail := range config.paths {
@@ -174,13 +140,6 @@ func parseRequest(conn *net.Conn) (*Request, error) {
 		HttpVersion: httpVersion,
 		PathParam:   make(map[string]string),
 	}, nil
-}
-
-type Request struct {
-	Method      string
-	Path        string
-	HttpVersion string
-	PathParam   map[string]string
 }
 
 func parseStatusLine(line string) (method string, path string, version string, err error) {
