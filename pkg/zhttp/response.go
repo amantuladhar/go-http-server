@@ -26,6 +26,11 @@ func (c *Response) Json(body []byte) *Response {
 	return c
 }
 
+func (c *Response) File(body []byte) *Response {
+	c.setBody(body, "application/octet-stream")
+	return c
+}
+
 func (c *Response) Text(body []byte) *Response {
 	c.setBody(body, "text/plain")
 	return c
