@@ -11,26 +11,51 @@ import (
 )
 
 type HandleFunc func(*Request) *Response
-
-type HttpServerConfig struct {
-	paths map[string]HandleFunc
+type PathDetail struct {
+	rg *regexp.Regexp
+	fn HandleFunc
 }
 
-func (c *HttpServerConfig) HandleFunc(pattern string, handler HandleFunc) *HttpServerConfig {
-	c.paths[pattern] = handler
-	return c
+type HttpServerConfig struct {
+	paths map[string]PathDetail
+}
+
+func (c *HttpServerConfig) HandleFunc(pattern string, handler HandleFunc) error {
+	split := strings.Split(pattern, "/")
+	splitPattern := make([]string, 0, len(split))
+	for _, s := range split {
+		if strings.Contains(s, " ") {
+			return fmt.Errorf("path placeholder cannot have whitespaces")
+		}
+		if len(s) > 3 && s[0] == '{' && s[len(s)-1] == '}' {
+			// This is better but cc is only considering 1 level paths
+			// "(?<%s>[\\w]*[^\\/])"
+			splitPattern = append(splitPattern, fmt.Sprintf("(?<%s>.*)", s[1:len(s)-1]))
+		} else {
+			splitPattern = append(splitPattern, s)
+		}
+	}
+
+	finalPattern := fmt.Sprintf("^%s$", strings.Join(splitPattern, "/"))
+	rg, err := regexp.Compile(finalPattern)
+	util.LogOnErr(err, "unable to compile regex", "path", pattern, "pattern", finalPattern)
+	c.paths[pattern] = PathDetail{
+		rg: rg,
+		fn: handler,
+	}
+	return nil
 }
 
 func NewHttpServerConfig() *HttpServerConfig {
 	return &HttpServerConfig{
-		paths: make(map[string]HandleFunc),
+		paths: make(map[string]PathDetail),
 	}
 }
 
 func ListenAndServe(addr string, config *HttpServerConfig) error {
 	l, err := net.Listen("tcp", addr)
 	util.ExitOnErr(err, "failed to bind", "addr", addr)
-
+	util.LogInfo(fmt.Sprintf("Server started: http://%s", addr))
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -62,15 +87,27 @@ type Response struct {
 
 func NewResponse() *Response {
 	return &Response{
+		headers:    make(map[string]string),
 		statusCode: 200,
 	}
 }
 
-func (c *Response) Json(body []byte) *Response {
-	c.headers["Content-Type"] = "application/json"
+func (c *Response) setBody(body []byte, contentType string) {
+	c.headers["Content-Type"] = contentType
+	c.headers["Content-Length"] = fmt.Sprintf("%d", len(body))
 	c.body = body
+}
+
+func (c *Response) Json(body []byte) *Response {
+	c.setBody(body, "application/json")
 	return c
 }
+
+func (c *Response) Text(body []byte) *Response {
+	c.setBody(body, "text/plain")
+	return c
+}
+
 func (r *Response) StatusCode(code int) *Response {
 	r.statusCode = code
 	return r
@@ -79,50 +116,31 @@ func (r *Response) StatusCode(code int) *Response {
 func processRequest(conn *net.Conn, config *HttpServerConfig, req *Request) error {
 	response := NewResponse().StatusCode(404)
 
-	// Need to update to use regex
-	for path, fn := range config.paths {
-		split := strings.Split(path, "/")
-		splitPattern := make([]string, 0, len(split))
-		for _, s := range split {
-			if strings.Contains(s, " ") {
-				return fmt.Errorf("path placeholder cannot have whitespaces")
-			}
-			if len(s) > 3 && s[0] == '{' && s[len(s)-1] == '}' {
-				// This is better but cc is only considering 1 level paths
-				// "(?<%s>[\\w]*[^\\/])"
-				splitPattern = append(splitPattern, fmt.Sprintf("(?<%s>.*)", s[1:len(s)-1]))
-			} else {
-				splitPattern = append(splitPattern, s)
-			}
-		}
-		finalPattern := fmt.Sprintf("^%s$", strings.Join(splitPattern, "/"))
-		rg, err := regexp.Compile(finalPattern)
-		util.LogOnErr(err, "unable to compile regex", "path", path, "pattern", "pattern")
-
-		if !rg.MatchString(req.Path) {
+	for _, detail := range config.paths {
+		if !detail.rg.MatchString(req.Path) {
 			continue
 		}
-		// fmt.Println(re.MatchString(xx))
-		// matches := re.FindStringSubmatch(xx)
-		// fmt.Println(fmt.Sprintf("0 -- %s", matches))
-		// fmt.Printf("1. %q\n", re.SubexpNames())
-
-		grpNames := rg.SubexpNames()
-		values := rg.FindStringSubmatch(path)
+		grpNames := detail.rg.SubexpNames()
+		values := detail.rg.FindStringSubmatch(req.Path)
 		for i := 1; i < len(grpNames); i++ {
 			req.PathParam[grpNames[i]] = values[i]
 		}
-		response = fn(req)
+		response = detail.fn(req)
 		break
 	}
 
 	// build response string
 	var statusLine = fmt.Sprintf("HTTP/1.1 %d %s", response.statusCode, statusCodeString(response.statusCode))
 
-	var headers = ""
-	var body = ""
+	headerList := make([]string, 0, len(response.headers))
+	for k, v := range response.headers {
+		headerList = append(headerList, fmt.Sprintf("%s: %s", k, v))
+	}
+	var headers = strings.Join(headerList, "\r\n")
 
-	var finalResponse = fmt.Sprintf("%s\r\n%s\r\n%s", statusLine, headers, body)
+	var body = string(response.body)
+
+	var finalResponse = fmt.Sprintf("%s\r\n%s\r\n\r\n%s", statusLine, headers, body)
 
 	_, err := (*conn).Write([]byte(finalResponse))
 	return err
@@ -155,6 +173,7 @@ func parseRequest(conn *net.Conn) (*Request, error) {
 		Method:      method,
 		Path:        path,
 		HttpVersion: httpVersion,
+		PathParam:   make(map[string]string),
 	}, nil
 }
 
@@ -173,7 +192,7 @@ func main() {
 		return NewResponse().StatusCode(200)
 	})
 	config.HandleFunc("/echo/{slug}", func(r *Request) *Response {
-		return NewResponse().StatusCode(200)
+		return NewResponse().Text([]byte(r.PathParam["slug"])).StatusCode(200)
 	})
 	err := ListenAndServe("0.0.0.0:4221", config)
 	util.ExitOnErr(err, "unable to start server")
