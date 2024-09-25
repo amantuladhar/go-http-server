@@ -17,13 +17,27 @@ func main() {
 	util.LogDebug(fmt.Sprintf("%v", argsWithoutProg))
 
 	config := zhttp.NewHttpServerConfig()
-	config.HandleFunc("/", root)
-	config.HandleFunc("/echo/{slug}", echo)
-	config.HandleFunc("/user-agent", userAgent)
-	config.HandleFunc("/files/{filename}", fileName)
+	config.HandleFunc("GET /", root)
+	config.HandleFunc("GET /echo/{slug}", echo)
+	config.HandleFunc("GET /user-agent", userAgent)
+	config.HandleFunc("GET /files/{filename}", fileName)
+	config.HandleFunc("POST /files/{filename}", postFileName)
 
 	err := zhttp.ListenAndServe("0.0.0.0:4221", config)
 	util.ExitOnErr(err, "unable to start server")
+}
+
+func postFileName(r *zhttp.Request) *zhttp.Response {
+	f, err := os.Create(fmt.Sprintf("/%s/%s", cliargs.GetArg("--directory"), r.PathParam["filename"]))
+
+	if err != nil {
+		return zhttp.NewResponse().Text([]byte("unable to create file")).StatusCode(500)
+	}
+	_, err = f.Write(r.Body)
+	if err != nil {
+		return zhttp.NewResponse().Text([]byte("unable to write")).StatusCode(500)
+	}
+	return zhttp.NewResponse().StatusCode(201)
 }
 func fileName(r *zhttp.Request) *zhttp.Response {
 	content, err := os.ReadFile(fmt.Sprintf("/%s/%s", cliargs.GetArg("--directory"), r.PathParam["filename"]))

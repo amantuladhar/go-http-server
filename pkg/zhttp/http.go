@@ -17,17 +17,24 @@ func NewHttpServerConfig() *httpServerConfig {
 
 type handleFunc func(*Request) *Response
 type pathDetail struct {
-	rg *regexp.Regexp
-	fn handleFunc
+	method string
+	rg     *regexp.Regexp
+	fn     handleFunc
 }
 
 type httpServerConfig struct {
 	paths map[string]pathDetail
 }
 
-func (c *httpServerConfig) HandleFunc(pattern string, handler handleFunc) error {
-	split := strings.Split(pattern, "/")
-	splitPattern := make([]string, 0, len(split))
+func (c *httpServerConfig) HandleFunc(fullPattern string, handler handleFunc) error {
+	// Split method and path
+	firstSplit := strings.SplitN(fullPattern, " ", 2)
+	if len(firstSplit) != 2 {
+		return fmt.Errorf("pattern on handle func must be <HTTP_VERB><SPACE><ROUTE_PATH>. e.g `GET /api/v1/yellos`")
+	}
+
+	split := strings.Split(firstSplit[1], "/")
+	splitPattern := make([]string, 0, len(firstSplit[1]))
 	for _, s := range split {
 		if strings.Contains(s, " ") {
 			return fmt.Errorf("path placeholder cannot have whitespaces")
@@ -44,12 +51,13 @@ func (c *httpServerConfig) HandleFunc(pattern string, handler handleFunc) error 
 	finalPattern := fmt.Sprintf("^%s$", strings.Join(splitPattern, "/"))
 	rg, err := regexp.Compile(finalPattern)
 	if err != nil {
-		util.LogErr("unable to compile regex", "path", pattern, "pattern", finalPattern, "err", err)
+		util.LogErr("unable to compile regex", "path", fullPattern, "pattern", finalPattern, "err", err)
 		return nil
 	}
-	c.paths[pattern] = pathDetail{
-		rg: rg,
-		fn: handler,
+	c.paths[fullPattern] = pathDetail{
+		method: firstSplit[0],
+		rg:     rg,
+		fn:     handler,
 	}
 	return nil
 }
@@ -85,7 +93,7 @@ func processRequest(conn *net.Conn, config *httpServerConfig, req *Request) erro
 	response := NewResponse().StatusCode(404)
 
 	for _, detail := range config.paths {
-		if !detail.rg.MatchString(req.Path) {
+		if req.Method != detail.method || !detail.rg.MatchString(req.Path) {
 			continue
 		}
 		grpNames := detail.rg.SubexpNames()
@@ -118,6 +126,8 @@ func statusCodeString(code int) string {
 	switch code {
 	case 200:
 		return "OK"
+	case 201:
+		return "Created"
 	case 404:
 		return "Not Found"
 	default:
@@ -126,7 +136,8 @@ func statusCodeString(code int) string {
 }
 
 func parseRequest(conn *net.Conn) (*Request, error) {
-	// TODO: Need to find a buffered reader way to do this
+	// TODO: Update to use buffered reader way
+	// Also what if 1024 bytes is not enought
 	buf := make([]byte, 1024)
 	n, err := (*conn).Read(buf)
 	if err != nil {
@@ -140,10 +151,11 @@ func parseRequest(conn *net.Conn) (*Request, error) {
 	}
 
 	headers := make(map[string]string)
-	// lineCount := 0
+	// incrementing this count so we know where body part is
+	lineCount := 1
 	var prevLine string
 	for _, line := range lines[1:] {
-		// lineCount = i
+		lineCount += 1
 		if prevLine == "" && line == "" {
 			break
 		}
@@ -151,12 +163,15 @@ func parseRequest(conn *net.Conn) (*Request, error) {
 		headers[splitH[0]] = splitH[1]
 	}
 
+	body := []byte(lines[lineCount])
+
 	return &Request{
 		Method:      method,
 		Path:        path,
 		HttpVersion: httpVersion,
 		PathParam:   make(map[string]string),
 		Headers:     headers,
+		Body:        body,
 	}, nil
 }
 

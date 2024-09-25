@@ -6,4 +6,5 @@ type Request struct {
 	HttpVersion string
 	PathParam   map[string]string
 	Headers     map[string]string
+	Body        []byte
 }
