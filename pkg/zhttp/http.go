@@ -64,20 +64,20 @@ func ListenAndServe(addr string, config *httpServerConfig) error {
 			util.LogErr("unable to accept client connection", "err", err)
 			continue
 		}
+		go func() {
+			req, err := parseRequest(&conn)
+			if err != nil {
+				util.LogErr("unable to parse request object from client connection", "err", err)
+				return
+			}
+			err = processRequest(&conn, config, req)
+			if err != nil {
+				util.LogErr("unable to process client request", "err", err)
+				return
+			}
 
-		req, err := parseRequest(&conn)
-		if err != nil {
-			util.LogErr("unable to parse request object from client connection", "err", err)
-			continue
-		}
-
-		err = processRequest(&conn, config, req)
-		if err != nil {
-			util.LogErr("unable to process client request", "err", err)
-			continue
-		}
-
-		conn.Close()
+			conn.Close()
+		}()
 	}
 }
 
