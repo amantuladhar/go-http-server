@@ -33,7 +33,7 @@ func (c *httpServerConfig) HandleFunc(pattern string, handler handleFunc) error 
 			return fmt.Errorf("path placeholder cannot have whitespaces")
 		}
 		if len(s) > 3 && s[0] == '{' && s[len(s)-1] == '}' {
-			// This is better but cc is only considering 1 level paths
+			// This is better but cc is only considers 2 level paths
 			// "(?<%s>[\\w]*[^\\/])"
 			splitPattern = append(splitPattern, fmt.Sprintf("(?<%s>.*)", s[1:len(s)-1]))
 		} else {
@@ -43,7 +43,10 @@ func (c *httpServerConfig) HandleFunc(pattern string, handler handleFunc) error 
 
 	finalPattern := fmt.Sprintf("^%s$", strings.Join(splitPattern, "/"))
 	rg, err := regexp.Compile(finalPattern)
-	util.LogOnErr(err, "unable to compile regex", "path", pattern, "pattern", finalPattern)
+	if err != nil {
+		util.LogErr("unable to compile regex", "path", pattern, "pattern", finalPattern, "err", err)
+		return nil
+	}
 	c.paths[pattern] = pathDetail{
 		rg: rg,
 		fn: handler,
@@ -97,8 +100,8 @@ func processRequest(conn *net.Conn, config *httpServerConfig, req *Request) erro
 	// build response string
 	var statusLine = fmt.Sprintf("HTTP/1.1 %d %s", response.statusCode, statusCodeString(response.statusCode))
 
-	headerList := make([]string, 0, len(response.headers))
-	for k, v := range response.headers {
+	headerList := make([]string, 0, len(response.Headers))
+	for k, v := range response.Headers {
 		headerList = append(headerList, fmt.Sprintf("%s: %s", k, v))
 	}
 	var headers = strings.Join(headerList, "\r\n")
@@ -130,15 +133,30 @@ func parseRequest(conn *net.Conn) (*Request, error) {
 		return nil, fmt.Errorf("unable to read from client connection")
 	}
 	lines := strings.Split(string(buf[:n]), "\r\n")
+
 	method, path, httpVersion, err := parseStatusLine(lines[0])
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse status line")
 	}
+
+	headers := make(map[string]string)
+	// lineCount := 0
+	var prevLine string
+	for _, line := range lines[1:] {
+		// lineCount = i
+		if prevLine == "" && line == "" {
+			break
+		}
+		splitH := strings.Split(strings.TrimSpace(line), ": ")
+		headers[splitH[0]] = splitH[1]
+	}
+
 	return &Request{
 		Method:      method,
 		Path:        path,
 		HttpVersion: httpVersion,
 		PathParam:   make(map[string]string),
+		Headers:     headers,
 	}, nil
 }
 

@@ -3,21 +3,21 @@ package zhttp
 import "fmt"
 
 type Response struct {
-	headers    map[string]string
+	Headers    map[string]string
 	body       []byte
 	statusCode int
 }
 
 func NewResponse() *Response {
 	return &Response{
-		headers:    make(map[string]string),
+		Headers:    make(map[string]string),
 		statusCode: 200,
 	}
 }
 
 func (c *Response) setBody(body []byte, contentType string) {
-	c.headers["Content-Type"] = contentType
-	c.headers["Content-Length"] = fmt.Sprintf("%d", len(body))
+	c.Headers["Content-Type"] = contentType
+	c.Headers["Content-Length"] = fmt.Sprintf("%d", len(body))
 	c.body = body
 }
 
